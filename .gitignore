@@ -22,3 +22,5 @@ go.work
 
 # Misc
 .terraform*
+dist
+.vscode
