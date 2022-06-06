@@ -1,4 +1,5 @@
-PORT=8080
+export PORT=8080
+export DATABASE_URL=postgres://recordings:recordings@localhost:5432/recordings?sslmode=disable
 
 clean:
 	rm -fdr dist
