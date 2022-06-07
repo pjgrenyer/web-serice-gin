@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,10 +8,17 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-var db *sql.DB
+type Album struct {
+	gorm.Model
+	ID     int64
+	Title  string
+	Artist string
+	Price  float32
+}
 
 func main() {
 	port := os.Getenv("PORT")
@@ -21,76 +27,71 @@ func main() {
 		log.Fatal("$PORT must be set")
 	}
 
-	// Get a database handle.
-	var err error
-	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	db, err := gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	pingErr := db.Ping()
-	if pingErr != nil {
-		log.Fatal(pingErr)
-	}
 	fmt.Println("Connected!")
 
+	// Migrate the schema
+	db.AutoMigrate(&Album{})
+
 	router := gin.Default()
-	router.GET("/albums", getAlbums)
-	router.GET("/albums/:id", getAlbumByID)
-	router.POST("/albums", postAlbums)
+	router.GET("/albums", getAlbums(db))
+	router.GET("/albums/:id", getAlbumByID(db))
+	router.POST("/albums", postAlbums(db))
 
 	router.Run(":" + port)
 }
 
-// getAlbums responds with the list of all albums as JSON.
-func getAlbums(c *gin.Context) {
-	albums, error := albums()
-	if error != nil {
-		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": error.Error()})
-		return
+func getAlbums(db *gorm.DB) gin.HandlerFunc {
+	fn := func(c *gin.Context) {
+		var albums []Album
+		db.Find(&albums)
+		c.IndentedJSON(http.StatusOK, albums)
 	}
-	c.IndentedJSON(http.StatusOK, albums)
+
+	return gin.HandlerFunc(fn)
+
 }
 
-// postAlbums adds an album from JSON received in the request body.
-func postAlbums(c *gin.Context) {
-	var newAlbum Album
+func postAlbums(db *gorm.DB) gin.HandlerFunc {
+	fn := func(c *gin.Context) {
+		var newAlbum Album
 
-	// Call BindJSON to bind the received JSON to
-	// newAlbum.
-	if err := c.BindJSON(&newAlbum); err != nil {
-		return
+		// Call BindJSON to bind the received JSON to
+		// newAlbum.
+		if err := c.BindJSON(&newAlbum); err != nil {
+			return
+		}
+
+		db.Create(&newAlbum)
+		c.IndentedJSON(http.StatusCreated, newAlbum)
 	}
 
-	id, error := addAlbum(newAlbum)
-	if error != nil {
-		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": error.Error()})
-		return
-	}
-	album, error := albumByID(id)
-	if error != nil {
-		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": error.Error()})
-		return
-	}
-	c.IndentedJSON(http.StatusCreated, album)
+	return gin.HandlerFunc(fn)
 }
 
-// getAlbumByID locates the album whose ID value matches the id
-// parameter sent by the client, then returns that album as a response.
-func getAlbumByID(c *gin.Context) {
-	id := c.Param("id")
-	n, error := strconv.ParseInt(id, 10, 64)
+func getAlbumByID(db *gorm.DB) gin.HandlerFunc {
+	fn := func(c *gin.Context) {
+		id := c.Param("id")
+		n, error := strconv.ParseInt(id, 10, 64)
 
-	if error != nil {
-		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Invalid param type"})
-		return
+		if error != nil {
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Invalid param type"})
+			return
+		}
+
+		var album Album
+		db.First(&album, n)
+		if album.ID == 0 {
+			c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Not found."})
+			return
+		}
+
+		c.IndentedJSON(http.StatusOK, album)
 	}
 
-	album, error := albumByID(n)
-	if error != nil {
-		c.IndentedJSON(http.StatusNotFound, gin.H{"message": error.Error()})
-		return
-	}
-
-	c.IndentedJSON(http.StatusOK, album)
+	return gin.HandlerFunc(fn)
 }
